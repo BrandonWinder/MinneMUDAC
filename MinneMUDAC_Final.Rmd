@@ -1,0 +1,326 @@
+---
+title: "MinneMUDAC Final"
+author: "Brandon Winder"
+date: "3/16/2021"
+output: html_document
+---
+
+```{r}
+# Load necessary libraries
+library(rvest)
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(caret)
+```
+
+### Collect stats for each game played of the top 150 teams ranked by win percent.
+
+```{r}
+# Create function to find the schedule and stats for a team.
+### Inputs: team as it would appear in the URL of the website below
+### Output: A data frame with each game and stats for the team entered.
+
+games_collect <- function(team){
+  Sports_ref <- paste("https://www.sports-reference.com/cbb/schools/", team, "/2021-gamelogs.html", sep = "")
+  html <- read_html(as.character(Sports_ref))
+
+  dat <- data.frame(Team = team,
+                      Opp = html_text(html_nodes(html, "td:nth-child(4)")),
+                      W_L = html_text(html_nodes(html, "td:nth-child(5)")),
+                      TM = html_text(html_nodes(html, "td:nth-child(6)")),
+                    Opp_Points = html_text(html_nodes(html, "td:nth-child(7)")),
+                      FG = html_text(html_nodes(html, "td:nth-child(8)")),
+                      FGA =html_text(html_nodes(html, "td:nth-child(9)")),
+                      FG_perc = html_text(html_nodes(html, "td:nth-child(10)")),
+                      P3 = html_text(html_nodes(html, "td:nth-child(11)")),
+                      PA3 = html_text(html_nodes(html, "td:nth-child(12)")),
+                      perc_3 = html_text(html_nodes(html, "td:nth-child(13)")),
+                      FT = html_text(html_nodes(html, "td:nth-child(14)")),
+                      FTA = html_text(html_nodes(html, "td:nth-child(15)")),
+                      FT_perc = html_text(html_nodes(html, "td:nth-child(16)")),
+                      ORB = html_text(html_nodes(html, "td:nth-child(17)")),
+                      TRB = html_text(html_nodes(html, "td:nth-child(18)")),
+                      AST = html_text(html_nodes(html, "td:nth-child(19)")),
+                      STL = html_text(html_nodes(html, "td:nth-child(20)")),
+                      BLK = html_text(html_nodes(html, "td:nth-child(21)")),
+                      TOV = html_text(html_nodes(html, "td:nth-child(22)")),
+                      PF = html_text(html_nodes(html, "td:nth-child(23)")))
+  
+  return(dat)
+}
+```
+
+```{r}
+# Collect the team names and store in data frame.
+teams2 <- data.frame()
+
+url <- paste("https://www.sports-reference.com/cbb/seasons/2021-school-stats.html")
+html <- read_html(url)
+x <- html_nodes(html, "td:nth-child(2)")
+wins <- html_nodes(html, "td:nth-child(6)")
+teams2 <- data.frame(Team = html_text(x, trim = TRUE), Win = html_text(wins, trim = TRUE))
+
+# Order that data frame by win percentage.
+teams2 <- teams2[order(teams2$Win, decreasing = TRUE), ]
+
+# Run code to clean the team names so they appear the same in the URL.
+trial <- teams2
+trial$Team <- str_replace_all(trial$Team, "UC-", "California ")
+
+trial$Team <- gsub('[[:punct:] ]+', ' ', trial$Team)
+trial$Team <- str_replace_all(trial$Team, "A M", "AM")
+
+trial$Team <- str_to_lower(trial$Team)
+which_ncaa <- which(str_detect(trial$Team, "ncaa"))
+for(i in 1:length(which_ncaa)){
+  trial$Team[which_ncaa[i]] <- substr(trial$Team[which_ncaa[i]], 1, nchar(trial$Team[which_ncaa[i]])-5)
+}
+trial$Team <- str_replace_all(trial$Team, " ", "-")
+
+extra <- which(grepl("^.+(-)$",trial$Team))
+for(i in 1:length(extra)){
+  name <- trial$Team[extra[i]]
+  trial$Team[extra[i]] <- substr(name,1,nchar(name)-1)
+}
+
+# Fix teams that did not appear in correct form for the URL.
+trial$Team[which(trial$Team == "louisiana")] <- str_replace_all(trial$Team[which(trial$Team == "louisiana")], "louisiana", "louisiana-lafayette")
+trial$Team[which(trial$Team == "st-john-s-ny")] <- str_replace_all(trial$Team[which(trial$Team == "st-john-s-ny")], "st-john-s-ny", "st-johns-ny")
+trial$Team[which(trial$Team == "saint-mary-s-ca")] <- str_replace_all(trial$Team[which(trial$Team == "saint-mary-s-ca")], "saint-mary-s-ca", "saint-marys-ca")
+trial$Team[which(trial$Team == "saint-peter-s")] <- str_replace_all(trial$Team[which(trial$Team == "saint-peter-s")], "saint-peter-s", "saint-peters")
+
+# Make a final data frame with the team names as it appears in URL.
+Final_Teams <- trial
+```
+
+```{r}
+# Collect data for the schedule and stats for each game for the top 150 teams ranked by win%.
+teams_sched <- data.frame()
+for(i in 1:150){
+  one_team <- games_collect(Final_Teams$Team[i])
+  teams_sched <- rbind(teams_sched, one_team)
+}
+
+# Change variables to numeric.
+for(i in 4:21){
+  teams_sched[,i] <- as.numeric(teams_sched[,i])
+}
+
+# Remove rows with NA values.
+teams_sched <- na.omit(teams_sched)
+```
+
+
+### Create logistic regression model for prediction.
+
+```{r}
+# Make win a factor variable.
+teams_sched$W_L <- substr(teams_sched$W_L, 1, 1)
+teams_sched$W_L <- ifelse(teams_sched$W_L == "W", 1, 0)
+teams_sched$W_L <- as.factor(teams_sched$W_L)
+
+# Set up training/validation data. 
+set.seed(111)
+train_index <- sample(row.names(teams_sched), 0.6*dim(teams_sched)[1])
+valid_index <- setdiff(row.names(teams_sched), train_index) 
+training_data <- teams_sched[train_index, ]
+valid_data <- teams_sched[valid_index, ]
+
+
+# Run logistic regression on training data. Remove repetitive percent variables.
+logit_data <- glm(W_L ~ FG + FGA + P3 + PA3 + FT + FTA + ORB + TRB + AST + STL + BLK + TOV + PF, data = training_data, family = "binomial")
+summary(logit_data)
+```
+
+
+### Collect data for the average stats over the season.
+
+```{r}
+# Collect the team names and store in data frame.
+teams <- data.frame()
+
+for(i in 1:7){
+  NCAA_url <- paste("https://www.ncaa.com/stats/basketball-men/d1/current/team/168/p", i, sep = "")
+  html <- read_html(NCAA_url)
+  x <- html_nodes(html, "td:nth-child(2)")
+  page <- data.frame(Team = html_text(x, trim = TRUE))
+  
+  teams <- rbind(teams, page)
+}
+```
+
+```{r}
+# Function for collecting Team data from NCAA.com.
+
+### Input:  url_num for team stats page
+###         col1 for team name column of data on page
+###         col2 for stat column of data on page
+### Output: Returns a data frame with the team and specific stat
+
+collect <- function(url_num, col1, col2){
+  dat <- data.frame()
+  for(i in 1:7){
+    NCAA_url <- paste("https://www.ncaa.com/stats/basketball-men/d1/current/team/", url_num, "/p", i, sep = "")
+
+    html <- read_html(NCAA_url)
+    team <- html_nodes(html, paste("td:nth-child(", col1, ")", sep = ""))
+    vars <- html_nodes(html, paste("td:nth-child(", col2, ")", sep = ""))
+  
+    page <- data.frame(Team = html_text(team, trim = TRUE), Stat = html_text(vars, trim = TRUE))
+  
+    dat <- rbind(dat, page)
+  }
+  return(dat)
+}
+```
+
+```{r}
+# Collect Team data to use for predictions.
+GAMES <- collect(147, 2, 3)
+TM <- collect(147, 2, 5)
+Opp_points <- collect(147, 2, 7)
+FG <- collect(148, 2, 4)
+FGA <- collect(148, 2, 5)
+FG_perc <- collect(148, 2, 6)
+P3 <- collect(152, 2, 4)
+PA3 <- collect(152, 2, 5)
+Perc_3 <- collect(152, 2, 6)
+FT <- collect(150, 2, 4)
+FTA <- collect(150, 2, 5)
+FT_perc <- collect(150, 2, 6)
+ORB <- collect(602, 2, 4)
+TRB <- collect(602, 2, 6)
+AST <- collect(216, 2, 5)
+STL <- collect(215, 2, 5)
+BLK <- collect(214, 2, 5)
+TOV <- collect(217, 2, 5)
+PF <- collect(286, 2, 5)
+
+team_data <- list(teams, GAMES, TM, Opp_points, FG, FGA, FG_perc, P3, PA3, Perc_3, FT, FTA, FT_perc, ORB, TRB, AST, STL, BLK, TOV, PF) %>% reduce(left_join, by = "Team")
+
+colnames(team_data) <- c("Team", "GAMES", colnames(teams_sched[,4:21]))
+
+for(i in 2:20){
+  team_data[,i] <- as.numeric(team_data[,i])
+}
+
+# Change variables to averages that are in totals for the year.
+to_avg <- c("FG", "FGA", "P3", "PA3", "FT", "FTA", "ORB", "TRB")
+for(i in 1:length(to_avg)){
+  team_data[,to_avg[i]] <- team_data[,to_avg[i]] / team_data$GAMES
+}
+```
+
+```{r}
+# Find predicted probabilities for each team to win a game.
+pred_probs <- predict(logit_data, team_data, type = "response")
+
+# Store it in a data fame and order it by win probability.
+prediction <- data.frame(Team = teams, Pred_prob = pred_probs)
+prediction <- prediction[order(prediction$Pred_prob, decreasing = TRUE), ]
+```
+
+
+### Collect data from the Ken Pomeroy website.
+
+```{r}
+# Create function to collect column from ken pomeroy's ranking table. 
+### Input a column number.
+### Output the text in that column.
+kens_data <- function(i){
+  Ken <- paste("https://kenpom.com/")
+  html <- read_html(Ken)
+  x <- html_nodes(html, paste("td:nth-child(", i, ")"))
+  page <- html_text(x, trim = TRUE)
+}
+
+# Collect data.
+kens_rank <- data.frame(Team = kens_data(2),
+                        Rank = kens_data(1),
+                        AdjEM = kens_data(5),
+                        AdjO = kens_data(6),
+                        AdjD = kens_data(8))
+
+# Change the variables to numeric, remove +/- signs, and remove seeding.
+kens_rank$AdjEM <- substr(kens_rank$AdjEM, 2, nchar(kens_rank$AdjEM))
+for(i in 2:length(kens_rank[1,])){
+  kens_rank[,i] <- as.numeric(kens_rank[,i])
+}
+kens_rank$Team <- gsub('[[:digit:]]+', '', kens_rank$Team)
+kens_rank$Team <- trimws(kens_rank$Team)
+```
+
+
+### Code for seed difference model.
+
+```{r}
+# load in data
+df <- read.csv("Big_Dance_CSV.csv")
+```
+
+```{r}
+# mutate in:
+# margin of victory
+# response variable = win/loss
+# new predictor = seed difference
+df <- df %>% mutate(MarginOfVictory = Score - Score.1)
+df <- df %>% mutate(SeedDifference = Seed.1 - Seed)
+df <- df %>% mutate(Win = ifelse(MarginOfVictory >= 1, 1, 0))
+```
+
+```{r}
+# set up algorithm
+model <- glm(Win ~ SeedDifference + Round, data = df, family = binomial)
+```
+
+
+
+### Create function to compare two teams.
+
+```{r}
+# Compare teams in bracket,
+### Input: team1 - Lower seed team name as character string
+###        team2 - Higher seed team name as character string
+### Output: Name of team that won the game and 1 if team1 won
+compare_teams <- function(team1, team2, seeddiff, round){
+  x_team1 <- which(prediction$Team == team1)
+  x_team2 <- which(prediction$Team == team2)
+  # For logistic regression.
+  if(prediction$Pred_prob[x_team1] > prediction$Pred_prob[x_team2]){
+    x <- 1
+  }
+  else{
+    x <- 0 
+  }
+  # For kenpom ranking.
+  y_team1 <- which(kens_rank$Team == team1)
+  y_team2 <- which(kens_rank$Team == team2)
+  if(kens_rank$Rank[y_team1] < kens_rank$Rank[y_team2]){
+    y <- 1
+  }
+  else{
+    y <- 0
+  }
+  
+  # Add in seed difference model.
+  new.df <- data.frame(SeedDifference = seeddiff, Round = round)
+  probs_seed <- predict(model, newdata = new.df, type = "response")
+  if(probs_seed > 0.5){
+    z = 1
+  }
+  else{
+    z = 0
+  }
+  
+  if(sum(x, y, z) > 1){
+    winner <- team1
+  }
+  else{
+    winner <- team2
+  }
+  return(winner)
+}
+
+```
+
