@@ -282,7 +282,7 @@ model <- glm(Win ~ SeedDifference + Round, data = df, family = binomial)
 # Compare teams in bracket,
 ### Input: team1 - Lower seed team name as character string
 ###        team2 - Higher seed team name as character string
-### Output: Name of team that won the game and 1 if team1 won
+### Output: Name of team predicted to win the game.
 compare_teams <- function(team1, team2, seeddiff, round){
   x_team1 <- which(prediction$Team == team1)
   x_team2 <- which(prediction$Team == team2)
@@ -321,6 +321,16 @@ compare_teams <- function(team1, team2, seeddiff, round){
   }
   return(winner)
 }
+
+```
+
+```{r}
+# Modify the names in the data frames so they are the same and work in the compare teams function.
+prediction$Team[which(prediction$Team == "Southern California")] <- str_replace_all(prediction$Team[which(prediction$Team == "Southern California")], "Southern California", "USC")
+
+prediction$Team[which(prediction$Team == "Eastern Wash.")] <- str_replace_all(prediction$Team[which(prediction$Team == "Eastern Wash.")], "Eastern Wash.", "Eastern Washington")
+
+kens_rank$Team[which(kens_rank$Team == "Connecticut")] <- str_replace_all(kens_rank$Team[which(kens_rank$Team == "Connecticut")], "Connecticut", "UConn")
 
 ```
 
