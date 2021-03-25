@@ -2,10 +2,12 @@
 title: "MinneMUDAC Final"
 author: "Brandon Winder"
 date: "3/16/2021"
-output: html_document
+output:
+  html_document: default
+  word_document: default
 ---
 
-```{r}
+```{r include=FALSE}
 # Load necessary libraries
 library(rvest)
 library(dplyr)
